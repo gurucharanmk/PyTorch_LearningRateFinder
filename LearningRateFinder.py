@@ -36,32 +36,48 @@ class LR_Finder(object):
             start_lr=1e-6,
             end_lr=5,
             beta=.98):
+        checkpoint = {
+            'state_dict': model.state_dict(),
+            'optimizer': optimizer.state_dict(),
+        }
+        torch.save(checkpoint, 'model_lr_finder.pth.tar')
         self.model = model
         self.optimizer = optimizer
         self.criterion = criterion
         self.start_lr = start_lr
         self.end_lr = end_lr
         self.trainloader = trainloader
-        self.step_size = len(self.trainloader) - 1
+        self.step_size = 150
         self.beta = beta
         self.lr_mult = (self.end_lr / self.start_lr)**(1 / self.step_size)
-        self.lr_loss_stats = {"lr": [], "loss": []}
         self.best_loss = 1e9
         self.device = torch.device(
             "cuda" if torch.cuda.is_available() else "cpu")
 
-    def _reset_model(self):
-        if isinstance(self.model, nn.Linear):
-            torch.nn.init.kaiming_uniform(self.model.weight)
-            self.model.bias.data.fill_(0.01)
+    def reset(self):
+        """Restores the model and optimizer to their initial states."""
+        checkpoint = torch.load(
+            'model_lr_finder.pth.tar',
+            map_location=self.device)
+        self.model.load_state_dict(checkpoint['state_dict'])
+        self.optimizer.load_state_dict(checkpoint['optimizer'])
+        self.model.to(self.device)
+        self.model.train()
 
     def find(self):
+        self.lr_loss_stats = {"lr": [], "loss": []}
         lr = self.start_lr
         self.optimizer.param_groups[0]['lr'] = lr
         avg_loss = 0.
         batch_counter = 0
         self.model.eval()
-        for inputs, labels in self.trainloader:
+        iterator = iter(self.trainloader)
+        for _ in range(self.step_size):
+            try:
+                inputs, labels = next(iterator)
+            except StopIteration:
+                iterator = iter(self.trainloader)
+                inputs, labels = next(iterator)
             batch_counter += 1
             inputs, labels = inputs.to(self.device), labels.to(self.device)
             self.optimizer.zero_grad()
@@ -82,4 +98,7 @@ class LR_Finder(object):
             self.optimizer.param_groups[0]['lr'] = lr
 
     def plot_lr(self):
-        plt.plot(self.lr_loss_stats['lr'], self.lr_loss_stats['loss'])
+        plt.plot(self.lr_loss_stats['lr'][10:-5],
+                 self.lr_loss_stats['loss'][10:-5])
+        plt.xlabel("Learning rate (log10 scale)")
+        plt.ylabel("Loss")
